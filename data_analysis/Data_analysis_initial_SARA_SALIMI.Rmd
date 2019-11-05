@@ -1,0 +1,144 @@
+---
+title: "Initial data analysis"
+author: "Sara Salimi"
+date: "11/04/2019"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, paged.print=TRUE)
+```
+
+## Objective
+
+The purpose of this lab is to do some basic data cleaning and highlight major questions that are to be addressed by the data analysis project.  
+
+## Topic: 
+Is there a relationship between poverty levels and opioid deaths in counties across the United States? 
+
+## Questions I want to address: 
+- What are the poverty rates in counties across the US?
+- What is the median household income in these counties?
+- What percentage of people in the counties live below the poverty line?
+- Which pharmacies are located in areas with high poverty levels?
+- How many shipments did these pharmacies receive?
+- What are the death rates in counties across the US?
+- What are the death rates from opioid overdoses in these counties?
+- How many pills per person in each of these counties?
+- How did the number of pills per person change between 2006-2012?
+- Were the pharmaceutical companies in these areas faced with any lawsuits?
+- How can we visualize changes in pills per person, deaths per county, and poverty levels?
+- In places where people are poor, are there more pills per population?
+- In places where people are poor, are there more deaths?
+- In places where people are poor, are there more pills shipments and deaths?
+
+```{r}
+
+# Loading the packages we will work with throughout the project
+library(tidyverse)
+library(janitor)
+library(arcos)
+library(tidycensus)
+library(scales)
+library(ggthemes)
+library(mapview)
+
+```
+
+
+```{r}
+# store one of our API keys as an object called key
+key <- "uO4EK6I"
+```
+
+We will start by getting the total pills and shipments for each county in the U.S. per year.  
+
+We will store them as an object called "arcos_county_pills_per_year".  We're going to use a function called "summarized_county_annual" and we're going to set the key as equal to the key we just stored. We will also use the clean_names function to make our data easier to visually examine. 
+
+```{r}
+arcos_county_pills_per_year <- summarized_county_annual(key = key) %>%
+  clean_names()
+```
+
+
+We will also add the county population with estimates for each year between 2006-2012 to our data and use the clean_names function again for better clarity:
+
+```{r}
+arcos_county_population_per_year <- county_population(key = key) %>%
+  clean_names()
+
+```
+
+There seems to be an inconsistent number of records for the pills and population datasets. There are some counties that are not in the pills table, and some pill shipments not in the county populations table. We will use the antijoin function to see what they are: 
+
+
+```{r}
+# 999 records in our population table without a countyfips+year match in our pills table
+not_in_pills <- arcos_county_population_per_year %>%
+  anti_join(arcos_county_pills_per_year, by=c("countyfips","year"))
+
+# 595 records in our pills table without a countyfips+year match in population table.  
+not_in_population <- arcos_county_pills_per_year %>%
+  anti_join(arcos_county_population_per_year, by=c("countyfips","year"))
+```
+
+Now we want to put these two datasets (pills and population) together. We will join them on both countyfips and year. We will also take out buyer_county and buyer_state because they're in both tables. 
+
+
+```{r}
+pills_population <- arcos_county_population_per_year %>%
+  left_join(arcos_county_pills_per_year, by = c("countyfips", "year", "buyer_county","buyer_state"))
+```
+
+For future purposes involving mapping and data visualization, we will clean up our data to better work with the state codes. We will make a column at the very beginning of the table called statefips, which will only have 
+
+
+```{r}
+pills_population <- pills_population %>%
+   mutate(statefips = str_sub(countyfips, 1,2)) %>%
+   select(statefips, countyfips, buyer_county, buyer_state,year, population,dosage_unit)
+
+```
+
+Now that our tables are joined, we are going to do our pills per population calculation. We will call the new column avg_yearly_pills_per_person and divide pills by population to get the value. We will also rank in descending order to see which counties are receiving the highest number of pills per person: 
+
+```{r}
+pills_population <- pills_population %>%
+  mutate(pills_per_person = dosage_unit/population) %>%
+  select(statefips, countyfips, buyer_county, buyer_state, year, dosage_unit, population, pills_per_person) %>%
+  arrange(desc(pills_per_person))
+
+# From this initial data analysis, we can see that the highest number of pills per person are in Leavenworth, Kansas between 2006-2008. Since there are so many counties we are looking at, we will proceed to do some filtering to get a better sense of what's going on. 
+
+```
+
+For a start, we will filter for Montgomery County, Maryland. 
+
+```{r}
+mont_county <- pills_population %>%
+  filter(buyer_county == "MONTGOMERY", buyer_state == "MD") %>%
+  arrange(desc(pills_per_person))
+
+#From this selection, we see that the average pills per person in this county was at almost 17 pills per person, a number that increased from 12 pills in 2006. 
+```
+
+To visualize our data, we will add a bar graph that can help with better seeing this slight increase in the number of pills per person between 2006-2012:
+
+```{r}
+ggplot(mont_county) +
+  geom_bar(stat="identity", aes(year, pills_per_person), fill="royal blue") +
+  labs(x="Year", y="Pills per person", title="In Montgomery County, the number of pills per person slightly increaesd between 2006-2012.", caption = "Source: DEA ARCOS database, via Washington Post") +
+  scale_x_continuous(breaks = c(2006, 2007, 2008, 2009, 2010, 2011, 2012)) +
+  scale_y_continuous(labels = comma)
+
+#This graph helps see the trends much more clearly. Although Montgomery County doesn't seem to have a drastic change in the number of pills per person, other counties might have a more noticeable change. For the rest of the data analysis, I will sample a few other counties and then add in the poverty data to further analyze. 
+
+```
+
+## Submission
+
+Link for assignment posted in my Github: https://github.com/ssalimi-lab/data-journalism-fall2019  
