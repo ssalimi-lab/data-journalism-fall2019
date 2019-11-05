@@ -47,6 +47,8 @@ library(scales)
 library(ggthemes)
 library(mapview)
 
+census_api_key("549950d36c22ff16455fe196bbbd01d63cfbe6cf")
+
 ```
 
 
@@ -131,13 +133,112 @@ To visualize our data, we will add a bar graph that can help with better seeing 
 ```{r}
 ggplot(mont_county) +
   geom_bar(stat="identity", aes(year, pills_per_person), fill="royal blue") +
-  labs(x="Year", y="Pills per person", title="In Montgomery County, the number of pills per person slightly increaesd between 2006-2012.", caption = "Source: DEA ARCOS database, via Washington Post") +
+  labs(x="Year", y="Pills per person", title="In Montgomery County, the number of pills per person slightly increased between 2006-2012.", caption = "Source: DEA ARCOS database, via Washington Post") +
   scale_x_continuous(breaks = c(2006, 2007, 2008, 2009, 2010, 2011, 2012)) +
   scale_y_continuous(labels = comma)
 
 #This graph helps see the trends much more clearly. Although Montgomery County doesn't seem to have a drastic change in the number of pills per person, other counties might have a more noticeable change. For the rest of the data analysis, I will sample a few other counties and then add in the poverty data to further analyze. 
 
 ```
+
+We will now add in data from Tidycensus:  
+
+```{r}
+
+county_geodata <- get_acs(geography = "county",
+              variables = "B01001_001", geometry = TRUE)
+
+state_geodata <- get_acs(geography = "state",
+              variables = "B01001_001", geometry = TRUE)
+
+```
+
+We will now pull out data from the American Community Survey on median household income between 2008-2012:
+
+```{r}
+#Pulling out median household income by state:
+state_median_income <- get_acs(geography = "state", variables = "B19013_001", endyear = 2012) %>%
+  arrange(desc(estimate))
+
+#Here we see that Maryland had the highest median household income between 2008-2012, and Puerto Rico had the lowest. 
+              
+```
+
+```{r}
+#Pulling out median household income by county:
+county_median_income <- get_acs(geography = "county", variables = "B19013_001", endyear = 2012) %>%
+  arrange(desc(estimate))
+
+# Here we see that Falls Church City, Virginia had the highest median household income, and Lares Municipio, Puerto Rico had the lowest. 
+            
+```
+
+Since we now have both sets of data (pills per person and median household income), we will do an inner join. First, we will change "GEOID" to countyfips so that we can do the join: 
+
+```{r}
+colnames(county_median_income)[colnames(county_median_income)=="GEOID"] <- "countyfips"
+```
+
+```{r}
+#doing the inner join: 
+pills_population <- county_median_income %>%
+  inner_join(pills_population, by="countyfips")
+
+```
+
+Let's plot to see how this looks on a graph: 
+
+```{r}
+
+ggplot(pills_population) +
+  geom_point(aes(estimate, pills_per_person))
+
+```
+
+```{r}
+ggplot(pills_population) +
+  geom_point(aes(estimate, pills_per_person)) +
+  labs(x="Median household income", y="Pills per person", title="Pills per person by county median household income in the United States", caption = "Source: DEA ARCOS database, via Washington Post", fill="buyer_county") +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(labels = comma) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_smooth(aes(population, dosage_unit), method = "lm", se = FALSE) +
+  geom_text(aes(estimate, pills_per_person, label=buyer_county))
+
+```
+
+
+
+Since Puerto Rico had the lowest median household income, we will zoom in on that data and plot it. 
+
+```{r}
+#Pulling out median household income data from counties in Puerto Rico: 
+puerto_rico <- get_acs(geography = "county", variables = "B19013_001", survey = "acs5", 
+              endyear = 2012, state = "PR") %>%
+            arrange(desc(estimate))
+
+options(scipen=999)
+
+```
+
+```{r}
+#Plotting the data: 
+puerto_rico %>%
+  mutate(NAME = gsub(" County, Puerto Rico", "", NAME)) %>%
+  ggplot(aes(x = estimate, y = reorder(NAME, estimate))) +
+  geom_errorbarh(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Household income by county in Puerto Rico",
+       subtitle = "2008-2012 American Community Survey",
+       y = "",
+       x = "ACS estimate (bars represent margin of error)")
+
+
+```
+
+
+
+
 
 ## Submission
 
