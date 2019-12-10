@@ -18,7 +18,7 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, paged.print=TRU
 The purpose of this lab is to do some basic data cleaning and highlight major questions that are to be addressed by the data analysis project.  
 
 ## Topic: 
-Is there a relationship between poverty levels and opioid deaths in counties across the United States? 
+Is there a relationship between poverty levels, opioid shipments and opioid consumption in states across the United States? 
 
 ## Questions I want to address: answers below 
 - What are the poverty rates in counties across the US?
