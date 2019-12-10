@@ -1,0 +1,567 @@
+---
+title: "Initial data analysis"
+author: "Sara Salimi"
+date: "11/04/2019"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, paged.print=TRUE)
+```
+
+## Objective
+
+The purpose of this lab is to do some basic data cleaning and highlight major questions that are to be addressed by the data analysis project.  
+
+## Topic: 
+Is there a relationship between poverty levels and opioid deaths in counties across the United States? 
+
+## Questions I want to address: answers below 
+- What are the poverty rates in counties across the US?
+- What is the median household income in these counties?
+- What percentage of people in the counties live below the poverty line?
+- What are the education levels of these populations?
+- Which race(s) are being targeted most in opioid shipments?
+- Which pharmacies are located in areas with high poverty levels?
+- How many shipments did these pharmacies receive?
+- What are the death rates in counties across the US?
+- What are the death rates from opioid overdoses in these counties?
+- How many pills per person in each of these counties?
+- How did the number of pills per person change between 2006-2012?
+- Were the pharmaceutical companies in these areas faced with any lawsuits?
+- In places where people are poor, are there more pills per population?
+- In places where people are poor, are there more deaths?
+- In places where people are poor, are there more pills shipments and deaths?
+- In places that are predominantly black, are there more pill shipments?
+- In places that are predominantly black, are there more opioid deaths?
+- Is there a correlation between gender and opioid overdose?
+- Is the relationship uniform or are there specific trends within individual states/counties?
+- Is there a "model" state that exemplifies the relationship between poverty and opioid deaths?
+- Is there a "model" state that exemplifies the relationship between gender and opioid deaths?
+- Is there a "model" state that exemplifies the relationship between income and opioid deaths?
+- Is there a "model" state that exemplifies the relationship between race and opioid deaths?
+- Is there a "model" state that exemplifies the relationship between education and opioid deaths?
+- Do individual county officials have anything to say about the factors playing into the opioid trends in that given area?
+- Is there a specific factor that a significant level of the opioid data could be attributed to?
+- What are the different correlation coefficients for the factors I'm looking into?
+- How can we visualize changes in pills per person, deaths per county, and poverty levels?
+- How do we make sure the data visualization is accurate and the graphs are trustable?
+
+
+```{r}
+
+# Loading the packages we will work with throughout the project
+library(tidyverse)
+library(janitor)
+library(arcos)
+library(tidycensus)
+library(scales)
+library(ggthemes)
+library(mapview)
+library(corrr)
+
+census_api_key("549950d36c22ff16455fe196bbbd01d63cfbe6cf")
+
+```
+
+
+```{r}
+# store one of our API keys as an object called key
+key <- "uO4EK6I"
+```
+
+We will start by getting the total pills and shipments for each county in the U.S. per year.  
+
+We will store them as an object called "arcos_county_pills_per_year".  We're going to use a function called "summarized_county_annual" and we're going to set the key as equal to the key we just stored. We will also use the clean_names function to make our data easier to visually examine. 
+
+```{r}
+arcos_county_pills_per_year <- summarized_county_annual(key = key) %>%
+  clean_names()
+```
+
+
+We will also add the county population with estimates for each year between 2006-2012 to our data and use the clean_names function again for better clarity:
+
+```{r}
+arcos_county_population_per_year <- county_population(key = key) %>%
+  clean_names()
+
+```
+
+There seems to be an inconsistent number of records for the pills and population datasets. There are some counties that are not in the pills table, and some pill shipments not in the county populations table. We will use the antijoin function to see what they are: 
+
+
+```{r}
+# 999 records in our population table without a countyfips+year match in our pills table
+not_in_pills <- arcos_county_population_per_year %>%
+  anti_join(arcos_county_pills_per_year, by=c("countyfips","year"))
+
+# 595 records in our pills table without a countyfips+year match in population table.  
+not_in_population <- arcos_county_pills_per_year %>%
+  anti_join(arcos_county_population_per_year, by=c("countyfips","year"))
+```
+
+Now we want to put these two datasets (pills and population) together. We will join them on both countyfips and year. We will also take out buyer_county and buyer_state because they're in both tables. 
+
+
+```{r}
+pills_population <- arcos_county_population_per_year %>%
+  left_join(arcos_county_pills_per_year, by = c("countyfips", "year", "buyer_county","buyer_state"))
+```
+
+For future purposes involving mapping and data visualization, we will clean up our data to better work with the state codes. We will make a column at the very beginning of the table called statefips, which will only have 
+
+
+```{r}
+pills_population <- pills_population %>%
+   mutate(statefips = str_sub(countyfips, 1,2)) %>%
+   select(statefips, countyfips, buyer_county, buyer_state,year, population,dosage_unit)
+
+```
+
+Now that our tables are joined, we are going to do our pills per population calculation. We will call the new column avg_yearly_pills_per_person and divide pills by population to get the value. We will also rank in descending order to see which counties are receiving the highest number of pills per person: 
+
+```{r}
+pills_population <- pills_population %>%
+  mutate(pills_per_person = dosage_unit/population) %>%
+  select(statefips, countyfips, buyer_county, buyer_state, year, dosage_unit, population, pills_per_person) %>%
+  arrange(desc(pills_per_person))
+
+# From this initial data analysis, we can see that the highest number of pills per person are in Leavenworth, Kansas between 2006-2008. Since there are so many counties we are looking at, we will proceed to do some filtering to get a better sense of what's going on. 
+
+```
+
+We will now add in data from Tidycensus:  
+
+```{r}
+
+county_geodata <- get_acs(geography = "county",
+              variables = "B01001_001", geometry = TRUE)
+
+state_geodata <- get_acs(geography = "state",
+              variables = "B01001_001", geometry = TRUE)
+
+```
+
+We will now pull out data from the American Community Survey on median household income between 2008-2012:
+
+```{r}
+#Pulling out median household income by state:
+state_median_income <- get_acs(geography = "state", variables = "B19013_001", endyear = 2012) %>%
+  arrange(desc(estimate))
+
+#Here we see that Maryland had the highest median household income between 2008-2012, and Puerto Rico had the lowest. 
+              
+```
+
+```{r}
+#Pulling out median household income by county:
+county_median_income <- get_acs(geography = "county", variables = "B19013_001", endyear = 2012) %>%
+  arrange(desc(estimate))
+
+# Here we see that Falls Church City, Virginia had the highest median household income, and Lares Municipio, Puerto Rico had the lowest. 
+            
+```
+
+Since we now have both sets of data (pills per person and median household income), we will do an inner join. First, we will change "GEOID" to countyfips so that we can do the join: 
+
+```{r}
+colnames(county_median_income)[colnames(county_median_income)=="GEOID"] <- "countyfips"
+```
+
+```{r}
+#doing the inner join: 
+pills_population_x <- county_median_income %>%
+  inner_join(pills_population, by="countyfips") %>%
+  group_by(buyer_county, buyer_state, countyfips) %>%
+  summarise(median_income = mean(estimate),
+            avg_pills_person = mean(pills_per_person))
+
+```
+
+Let's plot to see how this looks on a graph: 
+
+```{r}
+pills_population_x %>%
+  filter(avg_pills_person < 200) %>%
+  ggplot() +
+  geom_point(aes(median_income, avg_pills_person)) + 
+  geom_smooth(aes(median_income, avg_pills_person), method="lm")
+
+```
+
+```{r}
+
+pills_population_x %>%
+  ungroup() %>%
+  select(median_income, avg_pills_person) %>%
+  correlate()
+
+```
+
+```{r}
+ggplot(pills_population) +
+  geom_point(aes(population, pills_per_person)) +
+  labs(x="Median household income", y="Pills per person", title="Pills per person by county median household income in the United States", caption = "Source: DEA ARCOS database, via Washington Post", fill="buyer_county") +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(labels = comma) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_smooth(aes(population, dosage_unit), method = "lm", se = FALSE) +
+  geom_text(aes(population, pills_per_person, label=buyer_county))
+
+```
+
+Continuing the median income and opioid deaths idea... Although the correlation coefficient was not that strong, we can still come to certain conclusions by looking at data in individual states. We will start off by using the five states with the lowest median income (from the state median income data). We will look at trends in Puerto Rico, Mississippi, West Virginia, Arkansas, Kentucky and Alabama. We will not use, Puerto Rico, however because we don't have full data on it. 
+
+```{r}
+#Mississippi:
+
+mississippi_median_income <- get_acs(geography = "county", variables = "B19013_001", survey = "acs5", 
+              endyear = 2012, state = "MS") %>%
+            arrange(desc(estimate))
+
+options(scipen=999)
+
+```
+
+
+```{r}
+#Plotting the data: 
+mississippi_median_income %>%
+  mutate(NAME = gsub(" County, Mississippi", "", NAME)) %>%
+  ggplot(aes(x = estimate, y = reorder(NAME, estimate))) +
+  geom_errorbarh(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Household income by county in Mississippi",
+       subtitle = "2008-2012 American Community Survey",
+       y = "",
+       x = "ACS estimate (bars represent margin of error)")
+
+
+```
+
+
+```{r}
+#West Virginia:
+
+WV_median_income <- get_acs(geography = "county", variables = "B19013_001", survey = "acs5", 
+              endyear = 2012, state = "WV") %>%
+            arrange(desc(estimate))
+
+options(scipen=999)
+
+```
+
+
+```{r}
+#Plotting the data: 
+WV_median_income %>%
+  mutate(NAME = gsub(" County, West Virginia", "", NAME)) %>%
+  ggplot(aes(x = estimate, y = reorder(NAME, estimate))) +
+  geom_errorbarh(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Household income by county in West Virginia",
+       subtitle = "2008-2012 American Community Survey",
+       y = "",
+       x = "ACS estimate (bars represent margin of error)")
+
+
+```
+
+
+```{r}
+#Arkansas:
+
+arkansas_median_income <- get_acs(geography = "county", variables = "B19013_001", survey = "acs5", 
+              endyear = 2012, state = "AR") %>%
+            arrange(desc(estimate))
+
+options(scipen=999)
+
+```
+
+
+```{r}
+#Plotting the data: 
+arkansas_median_income %>%
+  mutate(NAME = gsub(" County, Arkansas", "", NAME)) %>%
+  ggplot(aes(x = estimate, y = reorder(NAME, estimate))) +
+  geom_errorbarh(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Household income by county in Arkansas",
+       subtitle = "2008-2012 American Community Survey",
+       y = "",
+       x = "ACS estimate (bars represent margin of error)")
+
+
+```
+
+
+```{r}
+#Kentucky:
+
+kentucky_median_income <- get_acs(geography = "county", variables = "B19013_001", survey = "acs5", 
+              endyear = 2012, state = "KY") %>%
+            arrange(desc(estimate))
+
+options(scipen=999)
+
+```
+
+
+```{r}
+#Plotting the data: 
+kentucky_median_income %>%
+  mutate(NAME = gsub(" County, Kentucky", "", NAME)) %>%
+  ggplot(aes(x = estimate, y = reorder(NAME, estimate))) +
+  geom_errorbarh(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Household income by county in Kentucky",
+       subtitle = "2008-2012 American Community Survey",
+       y = "",
+       x = "ACS estimate (bars represent margin of error)")
+
+
+```
+
+```{r}
+#Alabama:
+
+alabama_median_income <- get_acs(geography = "county", variables = "B19013_001", survey = "acs5", 
+              endyear = 2012, state = "AL") %>%
+            arrange(desc(estimate))
+
+options(scipen=999)
+
+```
+
+
+```{r}
+#Plotting the data: 
+alabama_median_income %>%
+  mutate(NAME = gsub(" County, Alabama", "", NAME)) %>%
+  ggplot(aes(x = estimate, y = reorder(NAME, estimate))) +
+  geom_errorbarh(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Household income by county in Alabama",
+       subtitle = "2008-2012 American Community Survey",
+       y = "",
+       x = "ACS estimate (bars represent margin of error)")
+
+
+```
+
+Now that we have the income data we want from the states and counties within them, we will look at the shipment levels to each of these states: 
+
+Pills sent to Mississippi: 
+
+```{r}
+arcos_state_pills_per_year <- summarized_county_annual(key = key) %>%
+  clean_names() %>%
+  arrange(desc(dosage_unit))
+```
+
+
+```{r}
+mississippi_pills_per_year <- arcos_state_pills_per_year %>%
+  filter(buyer_state == "MS") %>%
+  select(year, dosage_unit)
+```
+
+We will graph to visualize how the numbers have increased between 2006-2012: 
+
+```{r}
+
+  ggplot(mississippi_pills_per_year) +
+  geom_bar(stat="identity", aes(year, dosage_unit), fill="royal blue") +
+  labs(x="Year", y="Total pills", title="In Mississippi, opioids increased steadily from 2006 to 2012", subtitle = "Total pills shipped to Mississippi by year", caption = "Source: DEA ARCOS database, via Washington Post") +
+  scale_x_continuous(breaks = c(2006, 2007, 2008, 2009, 2010, 2011, 2012)) +
+  scale_y_continuous(labels = comma)
+
+```
+
+
+Pills sent to West Virginia by year: 
+
+
+```{r}
+WV_pills_per_year <- arcos_state_pills_per_year %>%
+  filter(buyer_state == "WV") %>%
+  select(year, dosage_unit)
+```
+
+We will graph to visualize how the numbers have increased between 2006-2012: 
+
+```{r}
+
+  ggplot(WV_pills_per_year) +
+  geom_bar(stat="identity", aes(year, dosage_unit), fill="royal blue") +
+  labs(x="Year", y="Total pills", title="In West Virginia, opioids increased steadily from 2006 to 2009, and remained relatively steady between 2009 to 2012", subtitle = "Total pills shipped to West Virginia by year", caption = "Source: DEA ARCOS database, via Washington Post") +
+  scale_x_continuous(breaks = c(2006, 2007, 2008, 2009, 2010, 2011, 2012)) +
+  scale_y_continuous(labels = comma)
+
+```
+
+Pills sent to Arkansas by year: 
+
+```{r}
+arkansas_pills_per_year <- arcos_state_pills_per_year %>%
+  filter(buyer_state == "AR") %>%
+  select(year, dosage_unit)
+```
+
+We will graph to visualize how the numbers have increased between 2006-2012: 
+
+```{r}
+
+  ggplot(arkansas_pills_per_year) +
+  geom_bar(stat="identity", aes(year, dosage_unit), fill="royal blue") +
+  labs(x="Year", y="Total pills", title="In Arkansas, opioids increased from 2006 to 2012.", subtitle = "Total pills shipped to Arkansas by year", caption = "Source: DEA ARCOS database, via Washington Post") +
+  scale_x_continuous(breaks = c(2006, 2007, 2008, 2009, 2010, 2011, 2012)) +
+  scale_y_continuous(labels = comma)
+
+```
+
+Pills sent to Kentucky by year: 
+
+```{r}
+kentucky_pills_per_year <- arcos_state_pills_per_year %>%
+  filter(buyer_state == "KY") %>%
+  select(year, dosage_unit)
+```
+
+We will graph to visualize how the numbers have increased between 2006-2012: 
+
+```{r}
+
+  ggplot(kentucky_pills_per_year) +
+  geom_bar(stat="identity", aes(year, dosage_unit), fill="royal blue") +
+  labs(x="Year", y="Total pills", title="In Kentucky, opioids increased from 2006 to 2012, with a decrease between 2011 to 2012.", subtitle = "Total pills shipped to Kentucky by year", caption = "Source: DEA ARCOS database, via Washington Post") +
+  scale_x_continuous(breaks = c(2006, 2007, 2008, 2009, 2010, 2011, 2012)) +
+  scale_y_continuous(labels = comma)
+
+```
+
+Pills sent to Alabama by year: 
+
+```{r}
+alabama_pills_per_year <- arcos_state_pills_per_year %>%
+  filter(buyer_state == "AL") %>%
+  select(year, dosage_unit)
+```
+
+We will graph to visualize how the numbers have increased between 2006-2012: 
+
+```{r}
+
+  ggplot(alabama_pills_per_year) +
+  geom_bar(stat="identity", aes(year, dosage_unit), fill="royal blue") +
+  labs(x="Year", y="Total pills", title="In Alabama, opioids increased from 2006 to 2012.", subtitle = "Total pills shipped to Alabama by year", caption = "Source: DEA ARCOS database, via Washington Post") +
+  scale_x_continuous(breaks = c(2006, 2007, 2008, 2009, 2010, 2011, 2012)) +
+  scale_y_continuous(labels = comma)
+
+```
+
+Now to put things in perspective, we will look to see whether these five state with the lowest median income levels in the nation are among the states with the highest numbers of pills per person: 
+
+```{r}
+state_pills_per_year <- pills_population %>%
+  select(buyer_state, year, population, pills_per_person) %>%
+  arrange (desc(pills_per_person))
+
+#The states with the highest right off the bat: Kansas, South Carolina, West Virginia, Virginia, and Kentucky. To get more accurate results, we will filter by year below. 
+```
+
+Pills per population in 2006: 
+
+```{r}
+six_state_pills_per_year <- pills_population %>%
+  select(buyer_state, year, population, pills_per_person) %>%
+  filter(year == "2006") %>%
+  arrange (desc(pills_per_person))
+
+#In 2006, the top six states with the highest number of pills per person: Kansas, Virginia, Nebraska, West Virginia and Kentucky.
+```
+
+Pills per population in 2007: 
+
+```{r}
+seven_state_pills_per_year <- pills_population %>%
+  select(buyer_state, year, population, pills_per_person) %>%
+  filter(year == "2007") %>%
+  arrange (desc(pills_per_person))
+
+#In 2007, the top six states with the highest number of pills per person: Kansas, West Virginia, Virginia, Kentucky, Tennessee and Ohio.
+```
+
+
+Pills per population in 2008: 
+
+```{r}
+eight_state_pills_per_year <- pills_population %>%
+  select(buyer_state, year, population, pills_per_person) %>%
+  filter(year == "2008") %>%
+  arrange (desc(pills_per_person))
+
+#In 2008, the top six states with the highest number of pills per person: Kansas, West Virginia, Virginia, Kentucky, South Carolina and Alabama.
+```
+
+
+Pills per population in 2009: 
+
+```{r}
+nine_state_pills_per_year <- pills_population %>%
+  select(buyer_state, year, population, pills_per_person) %>%
+  filter(year == "2009") %>%
+  arrange (desc(pills_per_person))
+
+#In 2009, the top six states with the highest number of pills per person: Virginia, South Carolina, West Virginia, Virginia, Kentucky and Alabama. 
+
+```
+
+Pills per population in 2010: 
+
+```{r}
+ten_state_pills_per_year <- pills_population %>%
+  select(buyer_state, year, population, pills_per_person) %>%
+  filter(year == "2010") %>%
+  arrange (desc(pills_per_person))
+
+#In 2010, the top six states with the highest number of pills per person: South Carolina, Virginia, Kentucky, Tennesssee, Alabama and Georgia. 
+
+```
+
+
+Pills per population in 2011: 
+
+```{r}
+eleven_state_pills_per_year <- pills_population %>%
+  select(buyer_state, year, population, pills_per_person) %>%
+  filter(year == "2011") %>%
+  arrange (desc(pills_per_person))
+
+#In 2011, the top six states with the highest number of pills per person: South Carolina, Virginia, Kentucky, West Virginia, Tennessee and Alabama. 
+
+```
+
+Pills per population in 2012: 
+
+```{r}
+twelve_state_pills_per_year <- pills_population %>%
+  select(buyer_state, year, population, pills_per_person) %>%
+  filter(year == "2012") %>%
+  arrange (desc(pills_per_person))
+
+#In 2012, the top six states with the highest number of pills per person: South Carolina, Virginia, Kentucky, Tennessee, West Virginia and Alabama. 
+
+```
+
+This final part really put everything in perspective. Out of the five states with the lowest median income levels, three of them ended up on the highest pills per person states by 2012. While my initial research did not show a correlation coefficient that was significant enough, further data analysis is showing that there may actually be a significant relationship when we zoom in a little more. Now that I have discovered this relationship, I am ready to pitch my story and ask to follow this story closely. A feature that goes: "three out of five states with the lowest income levels also had the highest numbers of pills per person. This may be why."
+
+## Submission
+
+Link for assignment posted in my Github: https://github.com/ssalimi-lab/data-journalism-fall2019  
